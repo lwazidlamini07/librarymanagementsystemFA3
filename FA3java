@@ -1,0 +1,337 @@
+package com.mycompany.librarymanagementsystem;
+
+import java.io.*;
+import java.time.*;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.regex.Pattern;
+
+public class LibraryManagementSystem {
+    private static final Pattern EMAIL_REGEX = Pattern.compile("^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$");
+    private static final long LOAN_PERIOD_DAYS = 5;
+    private static final double FINE_RATE_PER_DAY = 10.50;
+
+    private final List<Book> books = new ArrayList<>();
+    private final List<Member> members = new ArrayList<>();
+    private final Scanner scanner = new Scanner(System.in);
+    private final ExecutorService executorService = Executors.newCachedThreadPool();
+
+    public static void main(String[] args) {
+        new LibraryManagementSystem().run();
+    }
+
+    private void run() {
+        loadLibraryData();
+        startReminderThread();
+        while (true) {
+            displayMenu();
+            int choice = getUserChoice();
+            switch (choice) {
+                case 1 -> addBook();
+                case 2 -> searchBooks();
+                case 3 -> registerMember();
+                case 4 -> checkoutBook();
+                case 5 -> checkoutOrReturnBook(true); // true for return
+                case 6 -> viewDueDates();
+                case 7 -> viewFines();
+                case 8 -> saveAndExit();
+                default -> System.out.println("Invalid choice. Please try again.");
+            }
+        }
+    }
+
+    private void displayMenu() {
+        System.out.println("Library Management System\n1. Add Book\n2. Search Books\n3. Register Member\n" +
+                "4. Checkout Book\n5. Return Book\n6. View Due Dates\n7. View Fines\n8. Save and Exit");
+    }
+
+    private int getUserChoice() {
+        while (true) {
+            System.out.print("Enter your choice: ");
+            String input = scanner.nextLine().trim();
+            try {
+                int choice = Integer.parseInt(input);
+                if (choice < 1 || choice > 8) {
+                    System.out.println("Invalid choice. Please enter a number between 1 and 8.");
+                } else {
+                    return choice;
+                }
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid input. Please enter a valid number.");
+            }
+        }
+    }
+
+    private void addBook() {
+        System.out.print("Enter book title: ");
+        String title = scanner.nextLine();
+        System.out.print("Enter book author: ");
+        String author = scanner.nextLine();
+        books.add(new Book(title, author));
+        System.out.println("Added book: " + title + " by " + author);
+    }
+
+    private void searchBooks() {
+        System.out.print("Enter search term (title or author): ");
+        String searchTerm = scanner.nextLine().toLowerCase();
+        List<Book> matchingBooks = books.stream()
+                .filter(b -> b.getTitle().toLowerCase().contains(searchTerm) ||
+                        b.getAuthor().toLowerCase().contains(searchTerm))
+                .toList();
+        if (matchingBooks.isEmpty()) {
+            System.out.println("No books found.");
+        } else {
+            System.out.println("Matching books:");
+            matchingBooks.forEach(book -> System.out.println("- " +
+                    book.getTitle() + " by " +
+                    book.getAuthor() + " (available: " +
+                    book.isAvailable() + ")"));
+        }
+    }
+
+    private void registerMember() {
+        System.out.print("Enter member name: ");
+        String name = scanner.nextLine();
+        System.out.print("Enter member email: ");
+        String email = scanner.nextLine();
+        members.add(new Member(name, email));
+        System.out.println("Registered new member: " + name + " (" + email + ")");
+    }
+
+    private void checkoutBook() {
+        System.out.print("Enter member name: ");
+        String memberName = scanner.nextLine();
+        System.out.print("Enter book title: ");
+        String bookTitle = scanner.nextLine();
+
+        Member member = findMemberByName(memberName);
+        Book book = findBookByTitle(bookTitle);
+
+        if (member == null) {
+            System.out.println("Member '" + memberName + "' not found.");
+            return;
+        }
+
+        if (book == null) {
+            System.out.println("Book '" + bookTitle + "' not found.");
+            return;
+        }
+
+        if (!book.isAvailable()) {
+            System.out.println("Book '" + book.getTitle() + "' is currently checked out by another member.");
+            return;
+        }
+
+        // Calculate due date based on loan period
+        LocalDate dueDate = LocalDate.now().plusDays(LOAN_PERIOD_DAYS);
+
+        // Set book status and due date
+        book.setAvailable(false);
+        book.setDueDate(dueDate);
+
+        // Add book to member's borrowed books
+        member.getBorrowedBooks().add(book);
+
+        System.out.println(memberName + " checked out '" + bookTitle + "'.");
+    }
+
+    private void checkoutOrReturnBook(boolean isReturn) {
+        String action = isReturn ? "return" : "checkout";
+        System.out.print("Enter member name: ");
+        String memberName = scanner.nextLine();
+        System.out.print("Enter book title: ");
+        String bookTitle = scanner.nextLine();
+
+        Member member = findMemberByName(memberName);
+        Book book = findBookByTitle(bookTitle);
+
+        if (member == null) {
+            System.out.println("Member '" + memberName + "' not found.");
+            return;
+        }
+
+        if (book == null) {
+            System.out.println("Book '" + bookTitle + "' not found.");
+            return;
+        }
+
+        if (isReturn) {
+            if (!book.isAvailable()) {
+                book.setAvailable(true);
+                book.setDueDate(null);
+                member.getBorrowedBooks().remove(book);
+                System.out.println(memberName + " returned '" + bookTitle + "'.");
+            } else {
+                System.out.println("Book '" + bookTitle + "' is not checked out.");
+            }
+        }
+    }
+
+    private Member findMemberByName(String name) {
+        return members.stream()
+                .filter(m -> m.getName().equalsIgnoreCase(name))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Book findBookByTitle(String title) {
+        return books.stream()
+                .filter(b -> b.getTitle().equalsIgnoreCase(title))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private void viewDueDates() {
+        System.out.println("Due Dates:");
+        LocalDate today = LocalDate.now();
+        members.forEach(member -> {
+            member.getBorrowedBooks().forEach(book -> {
+                if (!book.isAvailable() && book.getDueDate() != null) {
+                    long daysOverdue = ChronoUnit.DAYS.between(book.getDueDate(), today);
+                    System.out.println("- " + member.getName() + " -> " + book.getTitle() +
+                            " (Due in " + daysOverdue + " days)");
+                }
+            });
+        });
+    }
+
+    private void viewFines() {
+        System.out.println("Overdue Fines:");
+        LocalDate today = LocalDate.now();
+        members.forEach(member -> {
+            member.getBorrowedBooks().forEach(book -> {
+                if (!book.isAvailable() && book.getDueDate() != null && today.isAfter(book.getDueDate())) {
+                    long daysOverdue = ChronoUnit.DAYS.between(book.getDueDate(), today);
+                    double fineAmount = calculateFine(daysOverdue);
+                    System.out.println("- " + member.getName() + " -> " + book.getTitle() +
+                            " (Overdue by " + daysOverdue + " days. Fine: R" + fineAmount + ")");
+                }
+            });
+        });
+    }
+
+    private double calculateFine(long daysOverdue) {
+        return daysOverdue * FINE_RATE_PER_DAY;
+    }
+
+    private void saveAndExit() {
+        saveLibraryData();
+        scanner.close();
+        executorService.shutdown();
+        System.out.println("Library data saved. Exiting...");
+        System.exit(0);
+    }
+
+    private void saveLibraryData() {
+        try (ObjectOutputStream outputStream = new ObjectOutputStream(new FileOutputStream("library_data.ser"))) {
+            outputStream.writeObject(books);
+            outputStream.writeObject(members);
+        } catch (IOException e) {
+            e.printStackTrace();
+            System.out.println("Error saving library data: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadLibraryData() {
+        try (ObjectInputStream inputStream = new ObjectInputStream(new FileInputStream("library_data.ser"))) {
+            books.clear();
+            members.clear();
+            books.addAll((List<Book>) inputStream.readObject());
+            members.addAll((List<Member>) inputStream.readObject());
+        } catch (IOException | ClassNotFoundException e) {
+            System.out.println("Error loading library data: " + e.getMessage());
+        }
+    }
+
+    private void startReminderThread() {
+        executorService.execute(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(24 * 60 * 60 * 1000); // Sleep for 24 hours (1 day)
+                    processDueBooksAndFines();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+    }
+
+    private void processDueBooksAndFines() {
+        LocalDate today = LocalDate.now();
+        for (Member member : members) {
+            for (Book book : member.getBorrowedBooks()) {
+                if (!book.isAvailable() && book.getDueDate() != null && today.isAfter(book.getDueDate())) {
+                    long daysOverdue = ChronoUnit.DAYS.between(book.getDueDate(), today);
+                    double fineAmount = calculateFine(daysOverdue);
+                    System.out.println("Book '" + book.getTitle() + "' is overdue by " + daysOverdue + " days. Fine: R" + fineAmount);
+                    // Additional logic to notify member and process fine payment
+                }
+            }
+        }
+    }
+
+    private static class Book implements Serializable {
+        private String title;
+        private String author;
+        private boolean available;
+        private LocalDate dueDate;
+
+        public Book(String title, String author) {
+            this.title = title;
+            this.author = author;
+            this.available = true;
+            this.dueDate = null;
+        }
+
+        public String getTitle() {
+            return title;
+        }
+
+        public String getAuthor() {
+            return author;
+        }
+
+        public boolean isAvailable() {
+            return available;
+        }
+
+        public void setAvailable(boolean available) {
+            this.available = available;
+        }
+
+        public LocalDate getDueDate() {
+            return dueDate;
+        }
+
+        public void setDueDate(LocalDate dueDate) {
+            this.dueDate = dueDate;
+        }
+    }
+
+    private static class Member implements Serializable {
+        private String name;
+        private String email;
+        private List<Book> borrowedBooks;
+
+        public Member(String name, String email) {
+            this.name = name;
+            this.email = email;
+            this.borrowedBooks = new ArrayList<>();
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public String getEmail() {
+            return email;
+        }
+
+        public List<Book> getBorrowedBooks() {
+            return borrowedBooks;
+        }
+    }
+}
